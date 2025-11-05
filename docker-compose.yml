@@ -1,0 +1,16 @@
+version: "3.9"
+
+services:
+  bot:
+    build: .
+    env_file:
+      - .env
+    volumes:
+      - ./Контроль:/app/Контроль
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'python main.py' >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
