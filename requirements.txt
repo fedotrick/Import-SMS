@@ -1,3 +1,11 @@
+# Основные зависимости для production
 PySide6>=6.6.1
-openpyxl>=3.1.2
+streamlit>=1.28.0
 pandas>=2.1.4
+plotly>=5.17.0
+openpyxl>=3.1.2
+python-telegram-bot>=20.6
+xlsxwriter>=3.1.9
+
+# Зависимости для разработки и сборки
+pyinstaller>=6.1.0
