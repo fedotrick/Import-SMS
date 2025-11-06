@@ -31,13 +31,28 @@ def _format_last_rows(rows: list[list[str | int | None]]) -> str:
 
     lines: list[str] = []
     for row in reversed(rows):
-        timestamp, _user_id, username, _chat_id, message_id, text = row
-        display_timestamp = timestamp or "—"
-        display_username = username or "—"
-        display_text = text or ""
-        lines.append(
-            f"{display_timestamp}\n{display_text}\nID сообщения: {message_id}, Автор: {display_username}"
-        )
+        if len(row) >= 6:
+            if len(row) > 10:
+                id_plavka = row[0]
+                uchetny_nomer = row[1]
+                plavka_data = row[2]
+                nomer_plavki = row[3]
+                naimenovanie = row[10] if len(row) > 10 else "—"
+                display_date = plavka_data.strftime("%d.%m.%Y") if hasattr(plavka_data, 'strftime') else str(plavka_data)
+                lines.append(
+                    f"Плавка {nomer_plavki}\n"
+                    f"Дата: {display_date}\n"
+                    f"Изделие: {naimenovanie}\n"
+                    f"Учётный №: {uchetny_nomer}"
+                )
+            else:
+                timestamp, _user_id, username, _chat_id, message_id, text = row[:6]
+                display_timestamp = timestamp or "—"
+                display_username = username or "—"
+                display_text = text or ""
+                lines.append(
+                    f"{display_timestamp}\n{display_text}\nID сообщения: {message_id}, Автор: {display_username}"
+                )
     return "\n\n".join(lines)
 
 

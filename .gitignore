@@ -78,3 +78,11 @@ coverage.xml
 # Telegram bot token (should be in environment)
 bot_token.txt
 BOT_TOKEN.txt
+
+# Excel lock files
+*.xlsx.lock
+*.lock
+
+# Test artifacts
+Контроль/plavka_test.xlsx
+Контроль/plavka_backup.xlsx
