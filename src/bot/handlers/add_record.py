@@ -9,7 +9,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message
 
 from src.bot.keyboards.main_menu import build_main_menu
-from src.bot.services.excel import ExcelServiceError, ExcelValidationError, append_message_row
+from src.bot.services.excel import ExcelServiceError, ExcelValidationError, append_message_row, append_plavka_rows
+from src.bot.services.parser import ParserError, parse_shift_report
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,30 @@ async def process_add_record(message: Message, state: FSMContext) -> None:
         logger.warning("Received message without sender data. message_id=%s", message.message_id)
         return
 
+    try:
+        report = parse_shift_report(record_text)
+        logger.info("Parsed shift report with %d plavok", len(report.plavki))
+        
+        rows = []
+        next_id = 1
+        for plavka in report.plavki:
+            rows.append(plavka.to_excel_row(next_id))
+            next_id += 1
+        
+        rows_added = append_plavka_rows(rows)
+        await state.clear()
+        await message.answer(
+            f"✅ Отчёт о смене успешно импортирован!\n\n"
+            f"Всего плавок: {report.total_plavok}\n"
+            f"Записано в Excel: {rows_added}\n"
+            f"Дата: {report.header.get('Дата', 'не указана')}\n"
+            f"Старший смены: {report.header.get('Старший_смены', 'не указан')}",
+            reply_markup=build_main_menu()
+        )
+        return
+    except ParserError as exc:
+        logger.info("Failed to parse as shift report, falling back to simple text: %s", exc)
+    
     try:
         append_message_row(
             user_id=user.id,
