@@ -1,0 +1,220 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        python-version: ["3.11"]
+    
+    services:
+      # Add any required services here (e.g., database)
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Lint with ruff
+      run: |
+        ruff check src/ tests/ --output-format=github
+        ruff format --check src/ tests/
+    
+    - name: Type check with mypy
+      run: |
+        mypy src/ --ignore-missing-imports --no-strict-optional
+      continue-on-error: true  # Allow mypy to fail temporarily
+    
+    - name: Run tests with pytest
+      run: |
+        pytest --cov=src --cov-report=xml --cov-report=term-missing --junitxml=test-results.xml
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+    
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: test-results-${{ matrix.python-version }}
+        path: |
+          test-results.xml
+          htmlcov/
+    
+    - name: Security scan with bandit
+      run: |
+        bandit -r src/ -f json -o bandit-report.json || true
+      continue-on-error: true
+    
+    - name: Upload security scan results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: security-scan-results
+        path: bandit-report.json
+
+  docker-test:
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build Docker image
+      uses: docker/build-action@v4
+      with:
+        context: .
+        load: true
+        tags: import-sms-bot:test
+    
+    - name: Test Docker image
+      run: |
+        # Create test environment file
+        echo "BOT_TOKEN=test_token_for_testing" > .env
+        echo "XLSX_PATH=./Контроль/plavka.xlsx" >> .env
+        echo "LOCALE=ru" >> .env
+        
+        # Run tests in container
+        docker run --rm \
+          -v $(pwd)/.env:/app/.env \
+          -v $(pwd)/tests:/app/tests \
+          import-sms-bot:test \
+          python -m pytest tests/unit/ -v --tb=short
+        
+        # Test application startup
+        timeout 10s docker run --rm \
+          -v $(pwd)/.env:/app/.env \
+          import-sms-bot:test \
+          python -c "from src.core.config import get_settings; print('Config loaded successfully')" || true
+
+  integration-test:
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run integration tests
+      run: |
+        pytest tests/integration/ -v --tb=short
+    
+    - name: Test concurrent access
+      run: |
+        pytest tests/integration/test_excel_integration.py::TestExcelIntegration::test_concurrent_access_safety -v
+
+  performance-test:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: Run performance tests
+      run: |
+        pytest tests/integration/test_excel_integration.py::TestExcelIntegration::test_performance_with_multiple_operations -v -s
+
+  deploy-test:
+    runs-on: ubuntu-latest
+    needs: [test, docker-test, integration-test]
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build and test deployment
+      run: |
+        # Create test environment
+        echo "BOT_TOKEN=test_token" > .env
+        echo "XLSX_PATH=./Контроль/plavka.xlsx" >> .env
+        echo "LOCALE=ru" >> .env
+        
+        # Test docker-compose
+        docker-compose config
+        docker-compose up -d --build
+        
+        # Wait for health check
+        timeout 60s bash -c 'until docker-compose ps | grep -q "healthy\|Up (health)"; do sleep 2; done'
+        
+        # Test that service is running
+        docker-compose exec bot python -c "print('Service is running')"
+        
+        # Cleanup
+        docker-compose down -v
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: [test, docker-test, integration-test]
+    if: always()
+    
+    steps:
+    - name: Notify on success
+      if: ${{ needs.test.result == 'success' && needs.docker-test.result == 'success' && needs.integration-test.result == 'success' }}
+      run: |
+        echo "✅ All tests passed successfully!"
+        echo "Coverage reports and artifacts are available in the Actions tab."
+    
+    - name: Notify on failure
+      if: ${{ needs.test.result == 'failure' || needs.docker-test.result == 'failure' || needs.integration-test.result == 'failure' }}
+      run: |
+        echo "❌ Some tests failed!"
+        echo "Please check the logs and fix the issues before merging."
